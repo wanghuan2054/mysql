@@ -1,5 +1,7 @@
 # MySQL
 
+本文SQL脚本基于MySQL5.6 - MySQL5.7
+
 目录： 
 
 [toc]
@@ -101,6 +103,201 @@ Database changed
 -- 显示当前库下所有表
 mysql> show tables;
 ```
+
+### 创建数据库
+
+```mysql
+mysql> create database if not exists mydb1;
+Query OK, 1 row affected (0.00 sec)
+
+mysql> show databases;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| kettleRepo         |
+| log_db             |
+| mydb1              |
+| mysql              |
+| performance_schema |
+| test               |
++--------------------+
+7 rows in set (0.00 sec)
+```
+
+
+
+### 删除数据库
+
+```mysql
+mysql> drop database if exists mydb1;
+Query OK, 0 rows affected (0.41 sec)
+
+mysql> show databases;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| kettleRepo         |
+| log_db             |
+| mysql              |
+| performance_schema |
+| test               |
++--------------------+
+6 rows in set (0.00 sec)
+```
+
+### 数据库编码
+
+```mysql
+-- 查看数据库编码
+mysql> show variables like '%char%';
++--------------------------+----------------------------+
+| Variable_name            | Value                      |
++--------------------------+----------------------------+
+| character_set_client     | utf8                       |
+| character_set_connection | utf8                       |
+| character_set_database   | utf8                       |
+| character_set_filesystem | binary                     |
+| character_set_results    | utf8                       |
+| character_set_server     | utf8                       |
+| character_set_system     | utf8                       |
+| character_sets_dir       | /usr/share/mysql/charsets/ |
++--------------------------+----------------------------+
+8 rows in set (0.00 sec)
+
+-- 查看表编码
+mysql> show create table T
+    -> ;
++-------+------------------------------------------------------------------------------------------------------------+
+| Table | Create Table                                                                                               |
++-------+------------------------------------------------------------------------------------------------------------+
+| T     | CREATE TABLE `T` (
+  `c` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci |
++-------+------------------------------------------------------------------------------------------------------------+
+1 row in set (0.00 sec)
+-- 查询字段
+mysql> show full columns from T;
++-------+---------+-----------+------+-----+---------+-------+---------------------------------+---------+
+| Field | Type    | Collation | Null | Key | Default | Extra | Privileges                      | Comment |
++-------+---------+-----------+------+-----+---------+-------+---------------------------------+---------+
+| c     | int(11) | NULL      | YES  |     | NULL    |       | select,insert,update,references |         |
++-------+---------+-----------+------+-----+---------+-------+---------------------------------+---------+
+1 row in set (0.00 sec)
+
+-- 修改数据库编码
+mysql> alter database test character set utf8;
+Query OK, 1 row affected (0.00 sec)
+
+mysql> show variables like '%char%';
++--------------------------+----------------------------+
+| Variable_name            | Value                      |
++--------------------------+----------------------------+
+| character_set_client     | utf8                       |
+| character_set_connection | utf8                       |
+| character_set_database   | utf8                       |
+| character_set_filesystem | binary                     |
+| character_set_results    | utf8                       |
+| character_set_server     | utf8                       |
+| character_set_system     | utf8                       |
+| character_sets_dir       | /usr/share/mysql/charsets/ |
++--------------------------+----------------------------+
+8 rows in set (0.00 sec)
+
+-- 修改表编码
+mysql> alter table T character set utf8mb4; 
+Query OK, 0 rows affected (0.00 sec)
+Records: 0  Duplicates: 0  Warnings: 0
+
+mysql> show create table T;
++-------+---------------------------------------------------------------------------------------+
+| Table | Create Table                                                                          |
++-------+---------------------------------------------------------------------------------------+
+| T     | CREATE TABLE `T` (
+  `c` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 |
++-------+---------------------------------------------------------------------------------------+
+1 row in set (0.00 sec)
+```
+
+### 表相关操作（DDL）
+
+```mysql
+-- 创建表
+CREATE TABLE student (
+    id CHAR(10),
+    name VARCHAR(50),
+    age INT,
+    gender VARCHAR(10)
+);
+-- 显示建表语句
+mysql> show create table student;
++---------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Table   | Create Table                                                                                                                                                                                                                                                                                     |
++---------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| student | CREATE TABLE `student` (
+  `id` char(10) COLLATE utf8_unicode_ci DEFAULT NULL,
+  `name` varchar(50) COLLATE utf8_unicode_ci DEFAULT NULL,
+  `age` int(11) DEFAULT NULL,
+  `gender` varchar(10) COLLATE utf8_unicode_ci DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci |
++---------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+1 row in set (0.00 sec)
+-- 打印表结构
+mysql> desc student;
++--------+-------------+------+-----+---------+-------+
+| Field  | Type        | Null | Key | Default | Extra |
++--------+-------------+------+-----+---------+-------+
+| id     | char(10)    | YES  |     | NULL    |       |
+| name   | varchar(50) | YES  |     | NULL    |       |
+| age    | int(11)     | YES  |     | NULL    |       |
+| gender | varchar(10) | YES  |     | NULL    |       |
++--------+-------------+------+-----+---------+-------+
+
+-- 删除表
+mysql> drop table student;
+
+-- 增加表列
+alter table student add (
+    qq varchar(15) ,
+    email varchar(20)
+);
+-- 查看表结构
+desc student;
+-- 修改列类型 , 若表中存在数据，修改列类型会影响预原有数据
+alter table student modify id varchar(10) ; 
+-- 查看表结构
+desc student;
+-- 修改列名, change 原列名 新列名 新类型
+alter table student change id uuid varchar(15) ; 
+-- 查看表结构
+desc student;
+-- 删除列
+alter  table student drop qq;
+-- 查看表结构
+desc student;
+-- 修改表名称
+alter  table student rename to stu;
+-- 查看表结构
+desc stu;
+```
+
+### 表相关操作（DML）
+
+```mysql
+
+```
+
+
+
+### 表相关操作（DQL）
+
+```mysql
+
+```
+
+
 
 ### **查看数据文件空间大小**
 
@@ -224,5 +421,5 @@ WHERE
     table_schema = 'zabbix'
 ORDER BY 3 DESC
 LIMIT 10;
-
 ```
+
