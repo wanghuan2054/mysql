@@ -166,6 +166,7 @@ mysql> show variables like '%char%';
 +--------------------------+----------------------------+
 8 rows in set (0.00 sec)
 
+
 -- 查看表编码
 mysql> show create table T
     -> ;
@@ -189,6 +190,9 @@ mysql> show full columns from T;
 -- 修改数据库编码
 mysql> alter database test character set utf8;
 Query OK, 1 row affected (0.00 sec)
+
+-- 临时修改编码，当前会话中
+set character_set_client=utf8
 
 mysql> show variables like '%char%';
 +--------------------------+----------------------------+
@@ -219,6 +223,12 @@ mysql> show create table T;
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 |
 +-------+---------------------------------------------------------------------------------------+
 1 row in set (0.00 sec)
+
+-- 永久修改数据库编码，配置文件中修改  重点关注client、results、connection编码
+[client]
+default-character-set=utf8
+[mysql]
+default-character-set=utf8
 ```
 
 ### 表相关操作（DDL）
@@ -255,6 +265,9 @@ mysql> desc student;
 | gender | varchar(10) | YES  |     | NULL    |       |
 +--------+-------------+------+-----+---------+-------+
 
+-- 查看表中列信息
+show columns from product; 
+
 -- 删除表
 mysql> drop table student;
 
@@ -286,7 +299,53 @@ desc stu;
 ### 表相关操作（DML）
 
 ```mysql
+-- insert into table 写法1
+insert into stu(uuid , name , age , gender,email)
+values ('20141102054','wanghuan',24,'F','1234@qq.com');
 
+-- insert into table 写法2 ，插入部分列，没有插入的列，默认为null
+insert into stu(uuid , name)	
+values ('20141105592','范欣桐');
+
+-- insert into table 写法3 , 不指定表中具体列，则插入所有列。值得顺序要和创建表时的顺序一致
+insert into stu
+values ('wanghuan','20141102054',24,'F','1234@qq.com');
+
+
+-- update 
+update stu t set age = 30 where t.`name` = 'wanghuan' ;
+commit;
+
+```
+
+### 表相关操作（DCL）
+
+```mysql
+-- 创建用户，指定IP地址登录
+create user zhangsan@localhost IDENTIFIED by '123456';
+
+-- 创建用户，任意IP地址可以登录
+create user lisi@'%' IDENTIFIED by '123456';
+
+-- root用户授权 , all 所有权限，mydb1.* 代表该数据库下所有表、视图、存储过程等
+GRANT all ON mydb1.* to lisi@'%'; 
+
+-- root用户撤销授权
+REVOKE delete on mydb1.* from lisi@'%';
+
+mysql> delete from stu where name='wanghuan';
+ERROR 1142 (42000): DELETE command denied to user 'lisi'@'localhost' for table 'stu'
+
+-- 查看指定用户的权限
+SHOW GRANTS FOR lisi@'%';
+SHOW GRANTS FOR zhangsan@'localhost';
+
+-- 删除用户
+DROP USER lisi@'%';
+
+[hadoop@test ~]$ mysql -ulisi -p123456    
+Warning: Using a password on the command line interface can be insecure.
+ERROR 1045 (28000): Access denied for user 'lisi'@'localhost' (using password: YES)
 ```
 
 
@@ -294,7 +353,72 @@ desc stu;
 ### 表相关操作（DQL）
 
 ```mysql
+-- IFNULL(expr1,expr2) 用法
+SELECT
+	t.uuid,
+	t.NAME,
+	IFNULL( t.gender, 'Know' ) AS A,
+	IFNULL( t.email, 'default@qq.com' ) B 
+FROM
+	stu t;
 
+-- 字符串连接,字段拼接
+SELECT
+	CONCAT( t.uuid, t.NAME ) 
+FROM
+	stu t;
+	
+-- 模糊查询 ,_代表单个字符 ， % 任意多个字符匹配
+SELECT
+	*
+FROM
+	stu t 
+  where t.name like '范%';
+	
+-- LIMIT , limit 计算公式（当前页-1）*每页查看数
+SELECT
+	*
+FROM
+	stu t  LIMIT 3,10 ;
+```
+
+
+
+### 备份与恢复
+
+```mysql
+-- CMD mysqldump 备份mydb1数据库内容（数据库本身内容不备份）
+[hadoop@test etc]$ mysqldump -uroot -p123456 mydb1 > /home/a.sql
+
+-- 恢复方式1  mysql
+-- 删除数据库，使用备份a.sql文件恢复
+mysql> drop database mydb1;
+
+-- 查看是否删除成功
+mysql> show databases;
+
+-- 重新创建数据库
+mysql> create database mydb1;
+mysql> show databases;
+
+-- 使用备份文件恢复数据库内容
+[hadoop@test ~]$ mysql -uroot -p123456 mydb1 < /home/hadoop/a.sql 
+
+-- 重新登录数据库，查看内容是否恢复
+[hadoop@test ~]$ mysql  -uroot -p
+mysql> show databases;
+
+mysql> use mydb1;
+mysql> show tables;
+mysql> select * from stu;
+
+-- 恢复方式2  source
+mysql> create database mydb2;
+mysql> show databases;
+mysql> use mydb2;
+mysql> source /home/hadoop/a.sql;
+mysql> show tables;
+mysql> select * from stu
 ```
 
 
