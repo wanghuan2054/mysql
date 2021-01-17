@@ -17,7 +17,19 @@
 mysql -v
 mysql
 
+mysqladmin --version 
 ```
+
+### **查询用户和用户组**
+
+```shell
+[hadoop@test ~]$ cat /etc/passwd | grep mysql
+mysql:x:496:493:MySQL server:/var/lib/mysql:/bin/bash
+[hadoop@test ~]$ cat /etc/group | grep mysql      
+mysql:x:493:
+```
+
+
 
 ### **配置文件**
 
@@ -61,6 +73,15 @@ character_set_server = utf8
 
 -- 默认mysql配置文件路径
 /etc/my.cnf
+
+--  mysql.server 命令及配置文件
+/usr/share/mysql
+
+-- mysqladmin mysqldump 等命令目录
+/usr/bin
+
+-- mysql 启停相关脚本 
+[hadoop@test mysql]$ cd /etc/init.d/mysql
 ```
 
 ### **启动关闭服务**
@@ -75,9 +96,26 @@ character_set_server = utf8
 
 -- 停止服务
 [root@0daycrack ~]# service mysqld stop
+
+-- 设置开机自启动
+chkconfig mysql on
+-- 查看是否启动 , 系统为3的启动模式下，开启MySQL自动开启 
+[hadoop@test ~]$ chkconfig --list | grep mysql
+mysql     
+      0:off   1:off   2:on    3:on    4:on    5:on    6:off
+
+-- 查看对应数字对应启动级别 ， 设置3为启动模式
+[hadoop@test ~]$ cat /etc/inittab
+# Default runlevel. The runlevels used are:
+#   0 - halt (Do NOT set initdefault to this)
+#   1 - Single user mode
+#   2 - Multiuser, without NFS (The same as 3, if you do not have networking)
+#   3 - Full multiuser mode
+#   4 - unused
+#   5 - X11
+#   6 - reboot (Do NOT set initdefault to this)
+id:3:initdefault:
 ```
-
-
 
 ### **登录MySQL**
 
@@ -419,6 +457,93 @@ mysql> use mydb2;
 mysql> source /home/hadoop/a.sql;
 mysql> show tables;
 mysql> select * from stu
+```
+
+
+
+### 主键
+
+#### 主键约束
+
+```mysql
+-- 创建表并指定主键方式1
+CREATE TABLE score (
+     no int PRIMARY KEY ,
+		 name VARCHAR(20)
+);
+
+-- 主键不能插入NULL
+insert into score values(NULL,'wanghuan') ;
+
+insert into score values(1,'wanghuan') ;
+
+insert into score values(2,'fanfan') ;
+-- > 1062 - Duplicate entry '2' for key 'PRIMARY' , 主键唯一性，不能插入重复值
+insert into score values(2,'wanghuan') ;
+
+SELECT * FROM score ;
+
+-- 创建表并指定主键方式2
+CREATE TABLE test (
+     no int  ,
+		 name VARCHAR(20) ,
+		 PRIMARY KEY(no)
+);
+
+-- 主键不能插入NULL
+insert into test values(NULL,'wanghuan') ;
+
+insert into test values(1,'wanghuan') ;
+
+insert into test values(2,'fanfan') ;
+-- > 1062 - Duplicate entry '2' for key 'PRIMARY' , 主键唯一性，不能插入重复值
+insert into test values(2,'wanghuan') ;
+
+SELECT * FROM test ;
+
+-- 修改表时指定主键
+CREATE TABLE test1 (
+     no int  ,
+		 name VARCHAR(20)
+);
+ALTER TABLE test1 add PRIMARY KEY (no);
+insert into test1 values(1,'wanghuan') ;
+
+insert into test1 values(2,'fanfan') ;
+
+SELECT * FROM test1 ;
+
+-- 删除主键
+ALTER TABLE test1 DROP PRIMARY KEY ;
+insert into test1 values(3,'fanfan') ;
+insert into test1 values(3,'fanfan') ;
+SELECT * FROM test1 ;
+```
+
+#### 主键自增ID
+
+```mysql
+-- 主键设置自增ID
+DROP TABLE score ;
+CREATE TABLE score ( NO INT PRIMARY KEY auto_increment, NAME VARCHAR ( 20 ) );
+
+-- 自增主键指定ID时，从指定数字开始自增
+insert into score values(2054,'wanghuan') ;
+
+insert into score values(1,'wanghuan') ;
+
+-- 插入式使用NULL,则插入使用自增ID(从表中最大ID除开始增长)
+insert into score values(NULL,'fanfan') ;
+insert into score values(NULL,'wanghuan') ;
+
+SELECT * FROM score ;
+
+-- 表内容删除时，自增ID不会从头计数
+DELETE FROM score ;
+
+insert into score values(2054,'wanghuan') ;
+insert into score values(null,'wanghuan') ;
+SELECT * FROM score ;
 ```
 
 
