@@ -34,7 +34,7 @@ mysql:x:493:
 ### **配置文件**
 
 ```mysql
--- 默认配置
+-- 默认配置 datadir 位于/var/lib/mysql
 datadir=/var/lib/mysql  -- data文件保存路径
 socket=/var/lib/mysql/mysql.sock
 # new
@@ -82,6 +82,16 @@ character_set_server = utf8
 
 -- mysql 启停相关脚本 
 [hadoop@test mysql]$ cd /etc/init.d/mysql
+```
+
+### **数据文件**
+
+```mysql
+-- frm文件 存放表结构
+
+--  myd 存放表数据
+
+-- myi 存放表索引
 ```
 
 ### **启动关闭服务**
@@ -202,8 +212,20 @@ mysql> show variables like '%char%';
 | character_set_system     | utf8                       |
 | character_sets_dir       | /usr/share/mysql/charsets/ |
 +--------------------------+----------------------------+
-8 rows in set (0.00 sec)
 
+mysql> show variables like '%character%';
++--------------------------+----------------------------+
+| Variable_name            | Value                      |
++--------------------------+----------------------------+
+| character_set_client     | utf8                       |
+| character_set_connection | utf8                       |
+| character_set_database   | utf8                       |
+| character_set_filesystem | binary                     |
+| character_set_results    | utf8                       |
+| character_set_server     | utf8                       |
+| character_set_system     | utf8                       |
+| character_sets_dir       | /usr/share/mysql/charsets/ |
++--------------------------+----------------------------+
 
 -- 查看表编码
 mysql> show create table T
@@ -268,6 +290,39 @@ default-character-set=utf8
 [mysql]
 default-character-set=utf8
 ```
+
+### 存储引擎
+
+```mysql
+-- 查看支持引擎
+mysql> show engines;
++--------------------+---------+----------------------------------------------------------------+--------------+------+------------+
+| Engine             | Support | Comment                                                        | Transactions | XA   | Savepoints |
++--------------------+---------+----------------------------------------------------------------+--------------+------+------------+
+| MyISAM             | YES     | MyISAM storage engine                                          | NO           | NO   | NO         |
+| CSV                | YES     | CSV storage engine                                             | NO           | NO   | NO         |
+| MRG_MYISAM         | YES     | Collection of identical MyISAM tables                          | NO           | NO   | NO         |
+| BLACKHOLE          | YES     | /dev/null storage engine (anything you write to it disappears) | NO           | NO   | NO         |
+| MEMORY             | YES     | Hash based, stored in memory, useful for temporary tables      | NO           | NO   | NO         |
+| InnoDB             | DEFAULT | Supports transactions, row-level locking, and foreign keys     | YES          | YES  | YES        |
+| ARCHIVE            | YES     | Archive storage engine                                         | NO           | NO   | NO         |
+| FEDERATED          | NO      | Federated MySQL storage engine                                 | NULL         | NULL | NULL       |
+| PERFORMANCE_SCHEMA | YES     | Performance Schema                                             | NO           | NO   | NO         |
++--------------------+---------+----------------------------------------------------------------+--------------+------+------------+
+
+mysql> show variables like '%storage_engine%';
++----------------------------+--------+
+| Variable_name              | Value  |
++----------------------------+--------+
+| default_storage_engine     | InnoDB |
+| default_tmp_storage_engine | InnoDB |
+| storage_engine             | InnoDB |
++----------------------------+--------+
+```
+
+
+
+
 
 ### 表相关操作（DDL）
 
@@ -544,6 +599,24 @@ DELETE FROM score ;
 insert into score values(2054,'wanghuan') ;
 insert into score values(null,'wanghuan') ;
 SELECT * FROM score ;
+```
+
+### SQL
+
+#### SQL执行顺序
+
+```mysql
+-- Mysql 执行顺序 
+FROM > ON > JOIN > WHERE > GROUP BY > HAVING > SELECT > DISTINCT > ORDER BY > LIMIT 
+```
+
+#### JOIN连接方式
+
+```mysql
+-- mysql不支持全连接全连接，使用union连接左连接和右连接，得到全连接
+SELECT s.student_name，t.teacher_name FROM student s LEFT JOIN teacher t ON s.teacher_id = t.id;
+union
+SELECT s.student_name，t.teacher_name FROM student s RIGHT JOIN teacher t ON s.teacher_id = t.id;
 ```
 
 
