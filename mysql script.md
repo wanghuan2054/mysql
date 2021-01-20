@@ -621,6 +621,274 @@ SELECT s.student_name，t.teacher_name FROM student s RIGHT JOIN teacher t ON s.
 
 
 
+### 索引
+
+#### 索引
+
+```mysql
+-- 查看某张表的索引
+ show index from stu;  
+ 
+ -- 创建表的索引
+ create index idx_stu_01 on stu(uuid);
+```
+
+#### 索引创建情况
+
+```mysql
+-- 需要创建索引的情况
+1. 主键自动建立唯一索引
+2. 频繁作为查询条件的字段
+3. 查询中与其他表关联的字段，外检关系需要建立索引
+4. where 条件中用不到的字段不创建索引
+5. 组合索引（复合索引），倾向于创建复合索引
+6. 查询汇总的排序字段，若通过索引去访问将大大提高排序速度
+7. 查询中统计或者分组字段
+
+-- 不适合创建索引的情况
+1. 频繁更新的字段不适合创建索引
+2. 表结构数据量少的时候（< 500w-800w）
+3. 区分度不是很大的字段，比如性别、国籍等（该列的不同值/所有记录行的比值越接近1 ，建索引的效果会越好）
+```
+
+### 执行计划
+
+#### 构建数据源
+
+```mysql
+-- 构建数据源
+-- 创建数据库：
+CREATE DATABASE Company;
+-- 创建employee表：
+CREATE TABLE employee (
+    employeeId INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(50) NOT NULL,
+    birth DATE,
+    joblevel VARCHAR(10),
+    salary DECIMAL(10 , 2 ),
+    phone VARCHAR(11),
+    departmentId INT NOT NULL
+);
+-- department表
+CREATE TABLE department (
+    departmentId INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(20)
+);
+-- 设置外键
+ALTER TABLE employee
+ADD CONSTRAINT fk_departmentId
+FOREIGN KEY (departmentId)
+REFERENCES department(departmentId);
+
+-- 插入数据
+-- ----------------------------
+-- Records of department
+-- ----------------------------
+INSERT INTO department VALUES ('1', '商务部');
+INSERT INTO department VALUES ('2', '行政部');
+INSERT INTO department VALUES ('3', '财务部');
+INSERT INTO department VALUES ('4', '研发部');
+-- ----------------------------
+-- Records of employee
+-- ----------------------------
+INSERT INTO employee VALUES ('1001', '张强', '1986-02-03', '一级', '8000.00', '13585422655', '1');
+INSERT INTO employee VALUES ('1003', '萌萌', '1990-04-19', '二级', '6000.00', '18548775264', '2');
+INSERT INTO employee VALUES ('1004', '李小峰', '1973-07-20', '二级', '5700.00', '18625489512', '1');
+INSERT INTO employee VALUES ('1006', '刘珊', '1976-06-28', '一级', '7500.00', '18524811174', '2');
+INSERT INTO employee VALUES ('1007', '李梅', '1980-01-29', '二级', '5500.00', '13958621455', '3');
+INSERT INTO employee VALUES ('1008', '张宝玉', '1982-09-23', '二级', '5600.00', '13715620210', '1');
+INSERT INTO employee VALUES ('1009', '陈大壮', '1978-05-21', '一级', '7700.00', '15848562585', '4');
+INSERT INTO employee VALUES ('1010', '张天琪', '1980-09-15', '二级', '5000.00', '13965815822', '4');
+```
+
+#### id
+
+```mysql
+-- 查询某条SQL的执行计划
+mysql> explain select * from stu;
++----+-------------+-------+------+---------------+------+---------+------+------+-------+
+| id | select_type | table | type | possible_keys | key  | key_len | ref  | rows | Extra |
++----+-------------+-------+------+---------------+------+---------+------+------+-------+
+|  1 | SIMPLE      | stu   | ALL  | NULL          | NULL | NULL    | NULL |    9 | NULL  |
++----+-------------+-------+------+---------------+------+---------+------+------+-------+
+
+-- 执行计划中 id 列详解
+-- select 查询的序列号，包含一组数字，表示查询中执行select字句或操作表的顺讯
+1. id相同，执行顺序由上至下
+2. id不同，如果有子查询，id值会递增，越内层的子查询id值越大，优先级越高，越先被执行
+3. id有相同有不同，id值越大的越先执行，相同id值得从上至下执行
+mysql> explain SELECT
+    -> * 
+    -> FROM
+    -> employee a
+    -> INNER JOIN ( SELECT DISTINCT b.departmentId , b.`name` FROM department b ) b ON a.departmentId = b.departmentId;
++----+-------------+------------+------+-----------------+-----------------+---------+----------------+------+-------+
+| id | select_type | table      | type | possible_keys   | key             | key_len | ref            | rows | Extra |
++----+-------------+------------+------+-----------------+-----------------+---------+----------------+------+-------+
+|  1 | PRIMARY     | <derived2> | ALL  | NULL            | NULL            | NULL    | NULL           |    4 | NULL  |
+|  1 | PRIMARY     | a          | ref  | fk_departmentId | fk_departmentId | 4       | b.departmentId |    1 | NULL  |
+|  2 | DERIVED     | b          | ALL  | NULL            | NULL            | NULL    | NULL           |    4 | NULL  |
++----+-------------+------------+------+-----------------+-----------------+---------+----------------+------+-------+
+-- 根据上述原则，id=2 即子查询b会先执行，然后执行id=1 ， table = <derived2> （表示取id=2的子查询结构作为驱动表），最后执行id=1中的a表 
+```
+
+#### select_type
+
+```mysql
+
+-- select_type 查询的类型，主要用于区别普通查询、联合查询、子查询等复杂查询的类型
+1. SIMPLE  -- 简单的select查询，不包含子查询或者union
+2. PRIMARY -- 查询中若包含任何复杂的子部分，最外层查询被标记为
+3. SUBQUERY -- select 中或者where列表中包含子查询
+4. DERIVED -- from 出现的子查询，会被标记为衍生表，结果放在临时表中。注意where条件后出现的子查询属于simple查询
+5. UNION   -- 出现在union后的第一个select被标记为union ， 若union出现在from子查询中，外层select被标记为DERIVED
+6. UNION RESULT -- 获取临时表中union结果
+
+mysql> explain SELECT
+    -> * 
+    -> FROM
+    -> employee a
+    -> INNER JOIN ( SELECT a.departmentId FROM employee a UNION SELECT b.departmentId FROM department b ) b ON a.departmentId = b.departmentId;
++----+--------------+------------+-------+-----------------+-----------------+---------+------------------------+------+-----------------+
+| id | select_type  | table      | type  | possible_keys   | key             | key_len | ref                    | rows | Extra           |
++----+--------------+------------+-------+-----------------+-----------------+---------+------------------------+------+-----------------+
+|  1 | PRIMARY      | a          | ALL   | fk_departmentId | NULL            | NULL    | NULL                   |    8 | NULL            |
+|  1 | PRIMARY      | <derived2> | ref   | <auto_key0>     | <auto_key0>     | 4       | Company.a.departmentId |    2 | Using index     |
+|  2 | DERIVED      | a          | index | NULL            | fk_departmentId | 4       | NULL                   |    8 | Using index     |
+|  3 | UNION        | b          | index | NULL            | PRIMARY         | 4       | NULL                   |    4 | Using index     |
+| NULL | UNION RESULT | <union2,3> | ALL   | NULL            | NULL            | NULL    | NULL                   | NULL | Using temporary |
++----+--------------+------------+-------+-----------------+-----------------+---------+------------------------+------+-----------------+
+```
+
+#### type
+
+```mysql
+
+-- type 查询访问类型从最好到最差
+system  > const > eq_ref > ref > range > index > all 
+system (单表只有一行数据，等于MySQL系统表)
+const 表示通过一次索引就查找到数据，const用于primary key 和unique 索引，因为通过主键或唯一索引只匹配一行数据，所以很快，如将主键置于where列表中，MySQL就能将该查询转换为一个常量
+eq_ref 唯一性索引扫描，对于每个索引键，表中只有一条记录与之匹配，常用于主键或唯一索引扫描
+ref 非唯一性索引扫描，返回匹配某个单独值得所有行（本质上是一种索引访问，会返回多个符合条件的行）
+range 索引范围扫描，常用语between < > in 等
+mysql> explain select * from employee where employeeId between 1001 and 1006  ;
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+| id | select_type | table    | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+|  1 | SIMPLE      | employee | range | PRIMARY       | PRIMARY | 4       | NULL |    4 | Using where |
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+
+mysql> explain select * from employee where employeeId in (1001 ,1006)  ;
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+| id | select_type | table    | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+|  1 | SIMPLE      | employee | range | PRIMARY       | PRIMARY | 4       | NULL |    2 | Using where |
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+mysql> explain select * from employee where employeeId > 1001  ;
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+| id | select_type | table    | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+|  1 | SIMPLE      | employee | range | PRIMARY       | PRIMARY | 4       | NULL |    7 | Using where |
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+1 row in set (0.00 sec)
+
+mysql> explain select * from employee where employeeId < 1006  ;
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+| id | select_type | table    | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+|  1 | SIMPLE      | employee | range | PRIMARY       | PRIMARY | 4       | NULL |    3 | Using where |
++----+-------------+----------+-------+---------------+---------+---------+------+------+-------------+
+
+index： full index scan ，index与all的区别是index类型只会遍历索引树，索引文件比数据文件小。index和all都是读全表，但是index从索引中读取，all是从硬盘全扫描。
+mysql> explain select employeeId from employee; 
++----+-------------+----------+-------+---------------+-----------------+---------+------+------+-------------+
+| id | select_type | table    | type  | possible_keys | key             | key_len | ref  | rows | Extra       |
++----+-------------+----------+-------+---------------+-----------------+---------+------+------+-------------+
+|  1 | SIMPLE      | employee | index | NULL          | fk_departmentId | 4       | NULL |    8 | Using index |
++----+-------------+----------+-------+---------------+-----------------+---------+------+------+-------------+
+
+-- all full table scan
+全表扫描，遍历数据文件每一行
+
+
+```
+
+**总结：一般来说，查询至少得达到range级别，最好能达到ref**
+
+#### possible_keys
+
+```mysql
+-- 查询涉及到字段上存在索引，推测出本次查询可能用到的索引（一个或多个），列出所有可能索引，但不一定是实际使用
+```
+
+#### key
+
+```mysql
+-- 实际使用的索引，如果为null，则该索引仅出现在key列表中
+-- 查询中如果使用了覆盖索引，则该索引出现在key列表中
+
+mysql> explain select * from employee where departmentId = 1 and employeeId = 1004;
++----+-------------+----------+-------+--------------------+---------+---------+-------+------+-------+
+| id | select_type | table    | type  | possible_keys      | key     | key_len | ref   | rows | Extra |
++----+-------------+----------+-------+--------------------+---------+---------+-------+------+-------+
+|  1 | SIMPLE      | employee | const | PRIMARY,idx_emp_01 | PRIMARY | 4       | const |    1 | NULL  |
++----+-------------+----------+-------+--------------------+---------+---------+-------+------+-------+
+
+-- 覆盖索引指的是select后面出现的字段和创建的复合索引顺序和个数一致，此时会走full index scan。
+```
+
+#### key_len
+
+```mysql
+-- 表示索引中使用的字节数，可通过该列计算查询中使用的索引的长度，在不损失查询精确度的前提下，长度越短越好
+-- key_len显示的值为索引字段的最大可能长度，并非实际使用长度，即key_len是根据表定义计算而得，不是通过表内检索出的。
+
+mysql> explain select * from employee where departmentId = 1 and employeeId = 1004;
++----+-------------+----------+-------+--------------------+---------+---------+-------+------+-------+
+| id | select_type | table    | type  | possible_keys      | key     | key_len | ref   | rows | Extra |
++----+-------------+----------+-------+--------------------+---------+---------+-------+------+-------+
+|  1 | SIMPLE      | employee | const | PRIMARY,idx_emp_01 | PRIMARY | 4       | const |    1 | NULL  |
++----+-------------+----------+-------+--------------------+---------+---------+-------+------+-------+
+```
+
+#### ref
+
+```mysql
+-- 显示索引的哪一列被使用了，如果可能得话，是一个常数，哪些列或常量被用于查找索引列的值。
+mysql> explain SELECT
+    ->      * 
+    ->     FROM
+    ->      employee a
+    ->     INNER JOIN ( SELECT DISTINCT b.departmentId , b.`name` FROM department b ) b ON a.departmentId = b.departmentId;
++----+-------------+------------+------+---------------+------------+---------+----------------+------+-------+
+| id | select_type | table      | type | possible_keys | key        | key_len | ref            | rows | Extra |
++----+-------------+------------+------+---------------+------------+---------+----------------+------+-------+
+|  1 | PRIMARY     | <derived2> | ALL  | NULL          | NULL       | NULL    | NULL           |    4 | NULL  |
+|  1 | PRIMARY     | a          | ref  | idx_emp_01    | idx_emp_01 | 4       | b.departmentId |    1 | NULL  |
+|  2 | DERIVED     | b          | ALL  | NULL          | NULL       | NULL    | NULL           |    4 | NULL  |
++----+-------------+------------+------+---------------+------------+---------+----------------+------+-------+
+```
+
+#### rows
+
+```mysql
+-- 根据表统计信息及索引选用情况，大致估算出找到所需的记录所需要读取的行数
+mysql> explain SELECT
+    ->      * 
+    ->     FROM
+    ->      employee a
+    ->     INNER JOIN ( SELECT DISTINCT b.departmentId , b.`name` FROM department b ) b ON a.departmentId = b.departmentId;
++----+-------------+------------+------+---------------+------------+---------+----------------+------+-------+
+| id | select_type | table      | type | possible_keys | key        | key_len | ref            | rows | Extra |
++----+-------------+------------+------+---------------+------------+---------+----------------+------+-------+
+|  1 | PRIMARY     | <derived2> | ALL  | NULL          | NULL       | NULL    | NULL           |    4 | NULL  |
+|  1 | PRIMARY     | a          | ref  | idx_emp_01    | idx_emp_01 | 4       | b.departmentId |    1 | NULL  |
+|  2 | DERIVED     | b          | ALL  | NULL          | NULL       | NULL    | NULL           |    4 | NULL  |
++----+-------------+------------+------+---------------+------------+---------+----------------+------+-------+
+```
+
+
+
 ### **查看数据文件空间大小**
 
 ```mysql
