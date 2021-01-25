@@ -730,6 +730,42 @@ mysql> explain SELECT
 |  2 | DERIVED     | b          | ALL  | NULL            | NULL            | NULL    | NULL           |    4 | NULL  |
 +----+-------------+------------+------+-----------------+-----------------+---------+----------------+------+-------+
 -- 根据上述原则，id=2 即子查询b会先执行，然后执行id=1 ， table = <derived2> （表示取id=2的子查询结构作为驱动表），最后执行id=1中的a表 
+
+-- 执行计划结果行显示
+mysql> explain SELECT      * FROM     employee a         INNER JOIN     (SELECT DISTINCT         b.departmentId, b.`name`     FROM         department b) b ON a.departmentId = b.departmentId\G
+*************************** 1. row ***************************
+           id: 1
+  select_type: PRIMARY
+        table: <derived2>
+         type: ALL
+possible_keys: NULL
+          key: NULL
+      key_len: NULL
+          ref: NULL
+         rows: 4
+        Extra: NULL
+*************************** 2. row ***************************
+           id: 1
+  select_type: PRIMARY
+        table: a
+         type: ref
+possible_keys: idx_emp_01
+          key: idx_emp_01
+      key_len: 4
+          ref: b.departmentId
+         rows: 1
+        Extra: NULL
+*************************** 3. row ***************************
+           id: 2
+  select_type: DERIVED
+        table: b
+         type: ALL
+possible_keys: NULL
+          key: NULL
+      key_len: NULL
+          ref: NULL
+         rows: 4
+        Extra: NULL
 ```
 
 #### select_type
@@ -889,19 +925,358 @@ mysql> explain SELECT
 
 
 
+#### Extra
+
+**不在执行计划正常分析列中显示的信息，同时也是非常重要的额外信息**
+
+##### Using filesort
+
+```mysql
+-- 额外补充信息
+-- 强制走某一复合索引idx_emp_dep_name(employeeId ,departmentId,name)
+mysql> explain SELECT * FROM employee T force index(idx_emp_dep_name)  where T.employeeId = 1008
+    -> order by name desc ;
++----+-------------+-------+------+------------------+------------------+---------+-------+------+-----------------------------+
+| id | select_type | table | type | possible_keys    | key              | key_len | ref   | rows | Extra                       |
++----+-------------+-------+------+------------------+------------------+---------+-------+------+-----------------------------+
+|  1 | SIMPLE      | T     | ref  | idx_emp_dep_name | idx_emp_dep_name | 4       | const |    1 | Using where; Using filesort |
++----+-------------+-------+------+------------------+------------------+---------+-------+------+-----------------------------+
+
+-- MySQL中无法利用内部索引顺序完成的排序操作为文件排序
+mysql> explain SELECT * FROM employee T force index(idx_emp_dep_name)  
+    -> where T.employeeId = 1008
+    -> order by departmentId , name  ;
++----+-------------+-------+------+------------------+------------------+---------+-------+------+-------------+
+| id | select_type | table | type | possible_keys    | key              | key_len | ref   | rows | Extra       |
++----+-------------+-------+------+------------------+------------------+---------+-------+------+-------------+
+|  1 | SIMPLE      | T     | ref  | idx_emp_dep_name | idx_emp_dep_name | 4       | const |    1 | Using where |
++----+-------------+-------+------+------------------+------------------+---------+-------+------+-------------+
+```
+
+
+
+##### Using temporary
+
+```mysql
+-- 使用临时表进行中间结果的保存，常见MySQL中对查询结果进行排序使用的临时表，用于order by 和 group by操作
+-- group  by 后的字段顺序和索引字段顺序不一致，导致Using temporary
+mysql> explain SELECT * FROM employee T force index(idx_emp_dep_name)  
+    -> where T.employeeId in (1008,1009,1006)
+    -> group  by departmentId   ;
++----+-------------+-------+-------+-----------------------------+------------------+---------+------+------+--------------------------------------------------------+
+| id | select_type | table | type  | possible_keys               | key              | key_len | ref  | rows | Extra                                                  |
++----+-------------+-------+-------+-----------------------------+------------------+---------+------+------+--------------------------------------------------------+
+|  1 | SIMPLE      | T     | range | idx_emp_01,idx_emp_dep_name | idx_emp_dep_name | 4       | NULL |    3 | Using index condition; Using temporary; Using filesort |
++----+-------------+-------+-------+-----------------------------+------------------+---------+------+------+--------------------------------------------------------+
+
+-- group  by employeeId , departmentId 顺序和索引顺序一致，消除Using temporary
+mysql> explain SELECT * FROM employee T force index(idx_emp_dep_name)  
+    -> where T.employeeId in (1008,1009,1006)
+    -> group  by employeeId , departmentId   ;
++----+-------------+-------+-------+-----------------------------+------------------+---------+------+------+-----------------------+
+| id | select_type | table | type  | possible_keys               | key              | key_len | ref  | rows | Extra                 |
++----+-------------+-------+-------+-----------------------------+------------------+---------+------+------+-----------------------+
+|  1 | SIMPLE      | T     | range | idx_emp_01,idx_emp_dep_name | idx_emp_dep_name | 4       | NULL |    3 | Using index condition |
++----+-------------+-------+-------+-----------------------------+------------------+---------+------+------+-----------------------+
+```
+
+
+
+##### Using index
+
+```mysql
+-- 表示相应的select中使用了覆盖索引，避免访问表的数据行
+-- 如果同时出现where ，表明索引被用来执行索引键的查找
+-- 如果没有同时出现where，表明索引用来读取数据而非执行查找动作。
+mysql> explain SELECT employeeId,departmentId,name  FROM employee T force index(idx_emp_dep_name)  
+    -> where T.employeeId = 1008   ;
++----+-------------+-------+------+------------------+------------------+---------+-------+------+-------------+
+| id | select_type | table | type | possible_keys    | key              | key_len | ref   | rows | Extra       |
++----+-------------+-------+------+------------------+------------------+---------+-------+------+-------------+
+|  1 | SIMPLE      | T     | ref  | idx_emp_dep_name | idx_emp_dep_name | 4       | const |    1 | Using index |
++----+-------------+-------+------+------------------+------------------+---------+-------+------+-------------+
+
+```
+
+##### Using where
+
+```mysql
+-- 表示是否使用了where过滤
+```
+
+##### Using join buffer
+
+```mysql
+-- 表示是否使用了连接缓存
+```
+
+##### Using Impossible WHERE
+
+```mysql
+-- where 过滤条件的值总是false，无法获取任何结果
+
+mysql> explain SELECT employeeId,departmentId,name  FROM employee T
+    -> where T.employeeId = 1001 
+    -> and T.employeeId = 1002;
++----+-------------+-------+------+---------------+------+---------+------+------+------------------+
+| id | select_type | table | type | possible_keys | key  | key_len | ref  | rows | Extra            |
++----+-------------+-------+------+---------------+------+---------+------+------+------------------+
+|  1 | SIMPLE      | NULL  | NULL | NULL          | NULL | NULL    | NULL | NULL | Impossible WHERE |
++----+-------------+-------+------+---------------+------+---------+------+------+------------------+
+```
+
+#### 索引优化
+
+```mysql
+1. 左右连接，多表查询中，索引字段一般建立在与连接方式相反的表中，因为左右连接的特性决定，左表或者右表一定会被都包含
+2. 索引建立在经常用户查询的字段中
+3. join中使用小表驱动大表（小的结果集驱动大的结果集），减少Nested Loop的总次数
+   确保Nested Loop内层循环上的join字段一定要加索引
+   当无法确保被驱动表的join条件被索引且内存资源充足的前提下，可以尽量把join buffer的内存大小调整大一点
+```
+
+#### 索引失效
+
+1.   尽量保证等值匹配或者全值匹配
+
+   ```mysql
+   mysql> SELECT * FROM Company.employee where employeeId = 1006;
+   +------------+--------+------------+----------+---------+-------------+--------------+
+   | employeeId | name   | birth      | joblevel | salary  | phone       | departmentId |
+   +------------+--------+------------+----------+---------+-------------+--------------+
+   |       1006 | 刘珊   | 1976-06-28 | 一级     | 7500.00 | 18524811174 |            2 |
+   +------------+--------+------------+----------+---------+-------------+--------------+
+   ```
+
+2. 最左前缀原则
+
+   ```mysql
+   -- idx_emp_dep_name  三列的复合索引
+   mysql> explain SELECT 
+       ->     *
+       -> FROM
+       ->     Company.employee 
+       -> where employeeId = 1008 
+       -> and departmentId = 1
+       -> and name = '张宝玉' ;
+   +----+-------------+----------+-------+-------------------------------------+---------+---------+-------+------+-------+
+   | id | select_type | table    | type  | possible_keys                       | key     | key_len | ref   | rows | Extra |
+   +----+-------------+----------+-------+-------------------------------------+---------+---------+-------+------+-------+
+   |  1 | SIMPLE      | employee | const | PRIMARY,idx_emp_01,idx_emp_dep_name | PRIMARY | 4       | const |    1 | NULL  |
+   +----+-------------+----------+-------+-------------------------------------+---------+---------+-------+------+-------+
+   
+   -- 如果复合索引中有多列，需要遵守最左前缀法，查询从索引的最左前列开始并且不跳过索引中的列
+   ```
+
+3. 索引列上不做任何操作，包括函数、计算、类型转换等操作，会导致索引失效转向全表扫描
+
+   ```mysql
+   -- 索引列上使用函数
+   mysql> explain SELECT 
+       ->     *
+       ->      FROM
+       ->          Company.employee 
+       ->      where left(employeeId,4) = 1008 ;
+   +----+-------------+----------+------+---------------+------+---------+------+------+-------------+
+   | id | select_type | table    | type | possible_keys | key  | key_len | ref  | rows | Extra       |
+   +----+-------------+----------+------+---------------+------+---------+------+------+-------------+
+   |  1 | SIMPLE      | employee | ALL  | NULL          | NULL | NULL    | NULL |    8 | Using where |
+   +----+-------------+----------+------+---------------+------+---------+------+------+-------------+
+   ```
+
+4. 尽量查询覆盖索引中的所有列，避免select *
+
+   ```mysql
+   -- 索引列和查询列尽量一致，性能最好
+   ```
+
+5. 使用<> !=等符号
+
+6. is null  ， is not null 也会无法使用索引
+
+7. like 已%通配符开头的，索引会变成全表扫描 （%mysql%）
+
+   ```mysql
+   -- like %写在右边
+   -- 若要使用两边都加%abc% ，需要使用覆盖索引解决 like %abc% ，索引失效的问题
+   ```
+
+   
+
+8. 字符串不加单引号索引失效
+
+9. 少用or ， 用它来连接时索引会失效
+
+   ```mysql
+   -- 使用or索引失效
+   mysql> explain SELECT 
+       ->     *
+       ->      FROM
+       ->          Company.employee 
+       ->      where left(employeeId,4) = 1008 ;
+   +----+-------------+----------+------+---------------+------+---------+------+------+-------------+
+   | id | select_type | table    | type | possible_keys | key  | key_len | ref  | rows | Extra       |
+   +----+-------------+----------+------+---------------+------+---------+------+------+-------------+
+   |  1 | SIMPLE      | employee | ALL  | NULL          | NULL | NULL    | NULL |    8 | Using where |
+   +----+-------------+----------+------+---------------+------+---------+------+------+-------------+
+   1 row in set (0.00 sec)
+   
+   mysql> explain SELECT * FROM mydb2.stu 
+       -> where mydb2.stu.uuid = '20141102054' or mydb2.stu.uuid = 'wanghuan'
+       -> ;
+   +----+-------------+-------+------+---------------+------+---------+------+------+-------------+
+   | id | select_type | table | type | possible_keys | key  | key_len | ref  | rows | Extra       |
+   +----+-------------+-------+------+---------------+------+---------+------+------+-------------+
+   |  1 | SIMPLE      | stu   | ALL  | idx_01        | NULL | NULL    | NULL |    9 | Using where |
+   +----+-------------+-------+------+---------------+------+---------+------+------+-------------+
+   1 row in set (0.00 sec)
+   
+   -- 把or 使用uinon 改写
+   mysql> explain
+       -> SELECT 
+       ->     *
+       -> FROM
+       ->     mydb2.stu
+       -> WHERE
+       ->     mydb2.stu.uuid = '20141102054' 
+       -> UNION SELECT 
+       ->     *
+       -> FROM
+       ->     mydb2.stu
+       -> WHERE
+       ->     mydb2.stu.uuid = 'wanghuan';
+   +----+--------------+------------+------+---------------+--------+---------+-------+------+-----------------------+
+   | id | select_type  | table      | type | possible_keys | key    | key_len | ref   | rows | Extra                 |
+   +----+--------------+------------+------+---------------+--------+---------+-------+------+-----------------------+
+   |  1 | PRIMARY      | stu        | ref  | idx_01        | idx_01 | 48      | const |    3 | Using index condition |
+   |  2 | UNION        | stu        | ref  | idx_01        | idx_01 | 48      | const |    1 | Using index condition |
+   | NULL | UNION RESULT | <union1,2> | ALL  | NULL          | NULL   | NULL    | NULL  | NULL | Using temporary       |
+   +----+--------------+------------+------+---------------+--------+---------+-------+------+-----------------------+
+   ```
+
+   
+
+#### 索引优化案例
+
+##### 数据源
+
+```mysql
+create table test(
+  id int primary key not null auto_increment ,
+  c1 char(10),
+  c2 char(10),
+  c3 char(10),
+  c4 char(10),
+  c5 char(10)
+);
+
+insert into test(c1,c2,c3,c4,c5) values('a1','a2','a3','a4','a5');
+insert into test(c1,c2,c3,c4,c5) values('b1','b2','b3','b4','b5');
+insert into test(c1,c2,c3,c4,c5) values('c1','c2','c3','c4','c5');
+insert into test(c1,c2,c3,c4,c5) values('d1','d2','d3','d4','d5');
+insert into test(c1,c2,c3,c4,c5) values('e1','e2','e3','e4','e5');
+
+
+select * from test ;
+
+-- 兴建索引
+create index idx_test_c1234 on test(c1,c2,c3,c4);
+
+show index from test;
+```
+
+##### 索引分析
+
+```mysql
+-- 走索引
+explain select * from test where c1 = 'a1' ;
+
+explain select * from test where c1 = 'a1' and c2='a2' ;
+
+explain select * from test where c1 = 'a1' and c2='a2'  and c3='a3';
+
+explain select * from test where c1 = 'a1' and c2='a2' and c3='a3' and c4='a4';
+
+explain select * from test where c1 = 'a1' and c2='a2' and c3='a3' and c4='a4' and c5='a5';
+
+-- 不使用索引
+explain select * from test where  c2='a2' ;
+
+-- 索引范围扫描 ， c3使用了范围比较，导致之后的索引c4不能使用
+mysql> explain select * from test where c1 = 'a1' and c2='a2' and c3 > 'a3' and c4='a4';
++----+-------------+-------+-------+----------------+----------------+---------+------+------+-----------------------+
+| id | select_type | table | type  | possible_keys  | key            | key_len | ref  | rows | Extra                 |
++----+-------------+-------+-------+----------------+----------------+---------+------+------+-----------------------+
+|  1 | SIMPLE      | test  | range | idx_test_c1234 | idx_test_c1234 | 93      | NULL |    1 | Using index condition |
++----+-------------+-------+-------+----------------+----------------+---------+------+------+-----------------------+
+
+-- 索引范围扫描 ， c4使用了范围比较 ， 索引都使用到了
+mysql> explain select * from test where c1 = 'a1' and c2='a2' and c4 > 'a4' and c3='a3';
++----+-------------+-------+-------+----------------+----------------+---------+------+------+-----------------------+
+| id | select_type | table | type  | possible_keys  | key            | key_len | ref  | rows | Extra                 |
++----+-------------+-------+-------+----------------+----------------+---------+------+------+-----------------------+
+|  1 | SIMPLE      | test  | range | idx_test_c1234 | idx_test_c1234 | 124     | NULL |    1 | Using index condition |
++----+-------------+-------+-------+----------------+----------------+---------+------+------+-----------------------+
+
+-- c3使用索引进行了排序，不是查找
+mysql>  explain select * from test where c1 = 'a1' and c2='a2' and c4 = 'a4' order by c3;
++----+-------------+-------+------+----------------+----------------+---------+-------------+------+------------------------------------+
+| id | select_type | table | type | possible_keys  | key            | key_len | ref         | rows | Extra                              |
++----+-------------+-------+------+----------------+----------------+---------+-------------+------+------------------------------------+
+|  1 | SIMPLE      | test  | ref  | idx_test_c1234 | idx_test_c1234 | 62      | const,const |    1 | Using index condition; Using where |
++----+-------------+-------+------+----------------+----------------+---------+-------------+------+------------------------------------+
+
+-- 使用到了外部排序
+mysql>  explain select * from test where c1 = 'a1' and c2='a2' order by c4;
++----+-------------+-------+------+----------------+----------------+---------+-------------+------+----------------------------------------------------+
+| id | select_type | table | type | possible_keys  | key            | key_len | ref         | rows | Extra                                              |
++----+-------------+-------+------+----------------+----------------+---------+-------------+------+----------------------------------------------------+
+|  1 | SIMPLE      | test  | ref  | idx_test_c1234 | idx_test_c1234 | 62      | const,const |    1 | Using index condition; Using where; Using filesort |
++----+-------------+-------+------+----------------+----------------+---------+-------------+------+----------------------------------------------------+
+
+-- order by顺序和索引顺序不一致，使用到外部文件排序
+mysql> explain select * from test where c1 = 'a1' and c5='a5' order by c3,c2;
++----+-------------+-------+------+----------------+----------------+---------+-------+------+----------------------------------------------------+
+| id | select_type | table | type | possible_keys  | key            | key_len | ref   | rows | Extra                                              |
++----+-------------+-------+------+----------------+----------------+---------+-------+------+----------------------------------------------------+
+|  1 | SIMPLE      | test  | ref  | idx_test_c1234 | idx_test_c1234 | 31      | const |    1 | Using index condition; Using where; Using filesort |
++----+-------------+-------+------+----------------+----------------+---------+-------+------+----------------------------------------------------+
+
+-- order by顺序和索引顺序不一致，但没有使用到外部文件排序（原因c2出现在索引查找列中，是一个常量了，排序时候某一列为定值不起作用）
+-- SQL 类似于explain select * from test where c1 = 'a1' and c2='a2' and c5='a5' order by c3；
+mysql> explain select * from test where c1 = 'a1' and c2='a2' and c5='a5' order by c3,c2;
++----+-------------+-------+------+----------------+----------------+---------+-------------+------+----------------------------------------------------+
+| id | select_type | table | type | possible_keys  | key            | key_len | ref         | rows | Extra                                              |
++----+-------------+-------+------+----------------+----------------+---------+-------------+------+----------------------------------------------------+
+|  1 | SIMPLE      | test  | ref  | idx_test_c1234 | idx_test_c1234 | 62      | const,const |    1 | Using index condition; Using where; Using filesort |
++----+-------------+-------+------+----------------+----------------+---------+-------------+------+----------------------------------------------------+
+
+--  group by 使用临时表进行排序
+-- explain select * from test where c1 = 'a1' and c5='a5' group by c2,c3（索引顺序和覆盖索引顺序一致）; 则不会产生Using temporary; Using filesort 
+mysql> explain select * from test where c1 = 'a1' and c5='a5' group by c3,c2;
++----+-------------+-------+------+----------------+----------------+---------+-------+------+---------------------------------------------------------------------+
+| id | select_type | table | type | possible_keys  | key            | key_len | ref   | rows | Extra                                                               |
++----+-------------+-------+------+----------------+----------------+---------+-------+------+---------------------------------------------------------------------+
+|  1 | SIMPLE      | test  | ref  | idx_test_c1234 | idx_test_c1234 | 31      | const |    1 | Using index condition; Using where; Using temporary; Using filesort |
++----+-------------+-------+------+----------------+----------------+---------+-------+------+---------------------------------------------------------------
+```
+
+
+
 ### **查看数据文件空间大小**
 
 ```mysql
 -- 查看数据文件挂载空间使用率
 [root@0daycrack mysql]# df -k
 文件系统                   1K-块     已用     可用 已用% 挂载点
-/dev/mapper/centos-root 49166336 31593092 17573244   65% /
+/dev/mapper/centos-
+root 49166336 31593092 17573244   65% /
 devtmpfs                 3983224        0  3983224    0% /dev
 tmpfs                    3995136        0  3995136    0% /dev/shm
 tmpfs                    3995136    20076  3975060    1% /run
 tmpfs                    3995136        0  3995136    0% /sys/fs/cgroup
 /dev/sda1                1038336   193040   845296   19% /boot
-tmpfs                     799028        0   799028    0% /run/user/0 
+tmpfs                     799028        0   799028    0% /run/user/0  
 
 -- 查看表空间信息、表空间模式
 mysql>  show variables like 'innodb_data_file_path%';
