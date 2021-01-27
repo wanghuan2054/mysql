@@ -1347,6 +1347,248 @@ mysql>  explain select * from test where c1 = 'a1' and c2='a2' and c3 like 'a%a3
 +----+-------------+-------+-------+----------------+----------------+---------+------+------+-----------------------+
 ```
 
+#### 小表驱动大表
+
+```mysql
+-- 小表驱动大表，小的数据集驱动大的数据集，类似于Nested Loop
+-- department and employee  ID列都建立了索引
+-- 当department表的数据集远远小于employee表时，使用IN的效率会优于Exists
+explain SELECT 
+    *
+FROM
+    employee
+WHERE
+    departmentId IN (SELECT 
+            departmentId
+        FROM
+            department
+        WHERE
+            departmentId <= 1);
++----+-------------+------------+-------+---------------+------------+---------+---------------------------------+------+--------------------------+
+| id | select_type | table      | type  | possible_keys | key        | key_len | ref                             | rows | Extra                    |
++----+-------------+------------+-------+---------------+------------+---------+---------------------------------+------+-------
+|  1 | SIMPLE      | department | index | PRIMARY       | PRIMARY    | 4       | NULL                            |    4 | Using where; Using index |
+|  1 | SIMPLE      | employee   | ref   | idx_emp_01    | idx_emp_01 | 4       | Company.department.departmentId |    1 | NULL                     |
++----+-------------+------------+-------+---------------+------------+---------+---------------------------------+------+-------
+-- 类似于for循环
+for SELECT departmentId FROM department
+   for  SELECT * FROM employee where employee.departmentId = department.departmentId
+
+-- 当department表的数据集远远大于employee表时，使用Exists的效率会优于 IN
+explain SELECT 
+    *
+FROM
+    employee
+WHERE
+    exists  (SELECT 
+            departmentId
+        FROM
+            department
+        WHERE
+            employee.departmentId = department.departmentId);
++----+--------------------+------------+--------+---------------+---------+---------+-------------------------------+------+-------------+
+| id | select_type        | table      | type   | possible_keys | key     | key_len | ref                           | rows | Extra       |
++----+--------------------+------------+--------+---------------+---------+---------+-------------------------------+------+----
+|  1 | PRIMARY            | employee   | ALL    | NULL          | NULL    | NULL    | NULL                          |    8 | Using where |
+|  2 | DEPENDENT SUBQUERY | department | eq_ref | PRIMARY       | PRIMARY | 4       | Company.employee.departmentId |    1 | Using index |
++----+--------------------+------------+--------+---------------+---------+---------+-------------------------------+------+---
+-- 类似于for循环
+for SELECT * FROM employee
+   for  SELECT * FROM department where employee.departmentId = department.departmentId
+```
+
+#### order by 
+
+```mysql
+-- mysql 支持两种方式排序， index和filesort
+-- index利用了扫描索引之后的顺序进行排序效率高，filesort方式效率低
+
+--order by 后面的列满足索引最左前缀
+explain SELECT 
+   *
+FROM
+    employee
+    order by employeeId;
+    
+-- where 与order by字句条件组合满足索引最左前列    
+explain SELECT 
+   *
+FROM
+    employee 
+    where employeeId = 1001
+    order by departmentId;
+
+-- filesort 参数调优
+-- order by 算法 
+-- 双路排序
+/*
+   第一次取出order by的列值和rowid， 对排序字段进行排序后
+   按照排序后的rowid再返回磁盘拿所有select后的值，至少发生两次磁盘扫描
+   总结：从磁盘读取排序字段，在buffer中排序，再从磁盘取其他字段
+*/
+-- 单路排序
+/*
+   第一次从磁盘取出所有查询用到的列，按照order by 列在buffer中进行排序，然后扫描排序后的列表进行输出
+   将至少两次从磁盘的IO降低为至少一次，提升IO效率，把随机IO转换为顺序IO，但是缺点是会使用更多的sort buffer空间（因为它需要在buffer中对所有的结果列进行保存排序）
+*/
+
+-- 单路排序算法整体由于双路，但是需要配合调整数据库参数进行优化
+1. innodb_sort_buffer_size参数 ， 可能会出现取出数据的大小超过sort buffer容量，会导致每次只能取sort buffer容量大小的数据，进行排序后将temp结果输出到磁盘临时文件保存，继续读取下一批sort buffer容量大小的数据，如此反复直到所有的数据经过sort buffer排完序后，从磁盘读取多个temp文件进行多路归并输出结果。
+整体提高innodb_sort_buffer_size值会提升效率，但是要评估系统的能力去调整这个参数，因为这个值是针对每个线程去分配的
+2. max_length_for_sort_data参数 ， 
+当select后的字段大小总和大于max_length_for_sort_data参数，而且排序字段不是text或者blob类型时，会使用单路排序算法，否则会使用多路算法。
+提高这个参数会增加使用单路排序算法的概率，但是如果设置过高，数据总容量超过innodb_sort_buffer_size的概率就会增大，明显的表现就是磁盘IO很高，但是CPU IDLE率很高。
+
+-- 如何查看这两个参数的值
+mysql> show variables like '%sort%';
++--------------------------------+---------------------+
+| Variable_name                  | Value               |
++--------------------------------+---------------------+
+| innodb_disable_sort_file_cache | OFF                 |
+| innodb_ft_sort_pll_degree      | 2                   |
+| innodb_sort_buffer_size        | 1048576             |
+| max_length_for_sort_data       | 1024                |
+| max_sort_length                | 1024                |
+| myisam_max_sort_file_size      | 9223372036853727232 |
+| myisam_sort_buffer_size        | 8388608             |
+| sort_buffer_size               | 262144              |
++--------------------------------+---------------------+
+
+总结：
+-- mysql两种排序方式：文件排序和扫描有序索引排序
+-- mysql能为排序与查询使用相同的索引
+复合索引为(a,b,c)
+
+-- order by 能使用索引最左前缀情况，不产生filesort
+order by a 
+order by a,b
+order by a,b,c
+order by a DESC , b DESC , c DESC
+explain SELECT 
+   employeeId , departmentId , name 
+FROM
+    employee 
+    order by employeeId desc, departmentId desc , name desc;
+
+-- where 使用索引最左前缀定义为常量，则order by能使用索引
+where a = const order by b,c
+where a = const and  b = const order by c
+where a = const and  b > const order by b,c
+
+-- 不能使用索引排序的情况
+order by a asc , b DESC , c DESC ， 排序升降序不一致
+where d = const order by b,c , 丢失索引列a，不满足最左前缀匹配
+where a = const order by c  ， 丢失b索引
+where a = const order by a,d ， d不是索引的一部分
+where a in(....) order by b,c   对于排序，多个相等条件也是范围查询
+```
+
+#### group by 
+
+```mysql
+-- group by 是先排序后分组，遵照索引的最左前缀匹配
+-- where 高于 having 	，能优先where优化的条件，就不要置于having中
+```
+
+
+
+#### 慢查询日志
+
+```mysql
+-- 查询慢查询日志是否开启（默认关闭，因为日志功能会影响性能）
+mysql> show variables like '%slow_query_log%';
++---------------------+------------------------------+
+| Variable_name       | Value                        |
++---------------------+------------------------------+
+| slow_query_log      | OFF                          |
+| slow_query_log_file | /var/lib/mysql/test-slow.log |
++---------------------+------------------------------+
+
+-- 如何开启慢查询日志功能
+-- mysql重启该参数会失效，退出shell重进入不会失效
+mysql> set global slow_query_log=1;
+Query OK, 0 rows affected (2.20 sec)
+
+-- 永久生效，需要设置my.cnf配置文件
+[mysqld]下设置
+slow_query_log=1
+slow_query_log_file=/var/lib/mysql/test-slow.log
+
+mysql> show variables like '%slow_query_log%';
++---------------------+------------------------------+
+| Variable_name       | Value                        |
++---------------------+------------------------------+
+| slow_query_log      | ON                           |
+| slow_query_log_file | /var/lib/mysql/test-slow.log |
++---------------------+------------------------------+
+
+-- 如何查询慢查询日志设置阈值 ， 默认查询超时的阈值是10s ， 系统判断是>10 ， 不是大等于
+mysql> show variables like '%long_query%';
++-----------------+-----------+
+| Variable_name   | Value     |
++-----------------+-----------+
+| long_query_time | 10.000000 |
++-----------------+-----------+
+
+-- 修改慢查询判断时间
+mysql> set global long_query_time=3;
+-- 直接修改后看不到变化，需要重新进入shell
+mysql> show variables like '%long_query%';
++-----------------+-----------+
+| Variable_name   | Value     |
++-----------------+-----------+
+| long_query_time | 10.000000 |
++-----------------+-----------+
+1 row in set (0.00 sec)
+
+-- 或者使用如下命令
+mysql> show global variables like '%long_query%';
++-----------------+----------+
+| Variable_name   | Value    |
++-----------------+----------+
+| long_query_time | 3.000000 |
++-----------------+----------+
+
+-- select  sleep
+mysql> select sleep(4);
++----------+
+| sleep(4) |
++----------+
+|        0 |
++----------+
+
+-bash-4.1$ more test-slow.log 
+/usr/sbin/mysqld, Version: 5.6.24 (MySQL Community Server (GPL)). started with:
+Tcp port: 3306  Unix socket: /var/lib/mysql/mysql.sock
+Time                 Id Command    Argument
+# Time: 210128  7:31:50
+# User@Host: root[root] @ localhost []  Id:    87
+# Query_time: 4.008059  Lock_time: 0.000000 Rows_sent: 1  Rows_examined: 0
+SET timestamp=1611790310;
+select sleep(4);
+```
+
+
+
+##### mysqldumpslow
+
+```mysql
+-- mysqldumpslow经常使用的参数：
+/*
+-s，是order的顺序
+----- al 平均锁定时间
+-----ar 平均返回记录时间
+-----at 平均查询时间（默认）
+-----c 计数
+-----l 锁定时间
+-----r 返回记录
+-----t 查询时间
+-t，是top n的意思，即为返回前面多少条的数据
+-g，后边可以写一个正则匹配模式，大小写不敏感的
+*/
+
+```
+
 
 
 ### **查看数据文件空间大小**
