@@ -1586,7 +1586,161 @@ select sleep(4);
 -t，是top n的意思，即为返回前面多少条的数据
 -g，后边可以写一个正则匹配模式，大小写不敏感的
 */
+-- 对慢查询日志的统计查询
+```
 
+
+
+### 函数和存储过程
+
+#### 函数
+
+```mysql
+-- 创建数据库名为bigdata
+CREATE DATABASE bigdata;
+
+-- 使用该数据库
+USE DATABASE ;
+
+-- 创建表dept
+CREATE TABLE dept (
+	id INT UNSIGNED PRIMARY KEY auto_increment,
+	depno MEDIUMINT UNSIGNED NOT NULL DEFAULT 0,
+	dname VARCHAR ( 20 ) NOT NULL DEFAULT '',
+  loc VARCHAR ( 13 ) NOT NULL DEFAULT '' 
+) ENGINE = INNODB DEFAULT CHARSET = GBK;
+
+-- 创建表dept
+CREATE TABLE emp (
+	id INT UNSIGNED PRIMARY KEY auto_increment,
+	empno MEDIUMINT UNSIGNED NOT NULL DEFAULT 0,
+	ename VARCHAR ( 20 ) NOT NULL DEFAULT '',
+	job VARCHAR ( 9 ) NOT NULL DEFAULT '',
+	mgr MEDIUMINT UNSIGNED NOT NULL DEFAULT 0,
+	hiredate DATE NOT NULL , 
+	sal DECIMAL(7,2) NOT NULL ,
+	comm DECIMAL(7,2) NOT NULL ,
+  deptno MEDIUMINT UNSIGNED NOT NULL DEFAULT 0 
+) ENGINE = INNODB DEFAULT CHARSET = GBK;
+
+-- 创建函数， 默认需要开启的参数 ， 8.0 版本默认开启
+-- 当开启二进制日志后，如果变量log_bin_trust_function_creators为OFF，那么创建或修改存储函数就会报error
+SHOW VARIABLES LIKE 'log_bin_trust_function_creators';
+SHOW VARIABLES LIKE 'log_bin'；
+
+
+-- MySQL5.6.24 中默认都是关闭
+mysql> SHOW VARIABLES LIKE 'log_bin_trust_function_creators';
++---------------------------------+-------+
+| Variable_name                   | Value |
++---------------------------------+-------+
+| log_bin_trust_function_creators | OFF   |
++---------------------------------+-------+
+1 row in set (0.00 sec)
+
+mysql> SHOW VARIABLES LIKE 'log_bin';
++---------------+-------+
+| Variable_name | Value |
++---------------+-------+
+| log_bin       | OFF   |
++---------------+-------+
+
+-- 创建函数，产生随机字符串
+-- returns定义的是函数返回值的类型 ， 而return则返回的是返回值
+CREATE FUNCTION rand_string(n int) RETURNS VARCHAR(255)
+BEGIN
+  DECLARE chars_set VARCHAR(100) DEFAULT 'abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+	DECLARE return_str VARCHAR(255) DEFAULT '';
+	DECLARE i INT DEFAULT 0 ;
+	WHILE i < n DO
+	 SET return_str = CONCAT(return_str,SUBSTR(chars_set,FLOOR(RAND()*52),1));
+	 SET i = i + 1 ;
+	END WHILE ;
+ RETURN return_str;
+END
+
+-- 创建产生随机数的函数
+CREATE FUNCTION rand_num() RETURNS INT(5)
+BEGIN
+	DECLARE i INT DEFAULT 0 ;
+	SET i = FLOOR(100+RAND()*10) ;
+ RETURN i;
+END
+
+-- 删除函数
+drop FUNCTION rand_num;
+
+-- 调用函数 , 类似于调用MySQL库函数一样
+SELECT rand_num() ; 
+SELECT rand_string(5) ; 
+```
+
+#### 存储过程
+
+```mysql
+--  查看自动提交是否开启的两种方式
+mysql> select @@autocommit;
++--------------+
+| @@autocommit |
++--------------+
+|            1 |
++--------------+
+
+mysql> show variables like 'autocommit';
++---------------+-------+
+| Variable_name | Value |
++---------------+-------+
+| autocommit    | ON    |
++---------------+-------+
+
+-- 创建出插入emp 表的存储过程
+CREATE PROCEDURE insert_emp (
+	IN START INT ( 10 ),
+	IN max_num INT ( 10 )) BEGIN
+	DECLARE
+		i INT DEFAULT 0;
+	
+	SET autocommit = 0;
+	REPEAT
+			
+			SET i = i + 1;
+		INSERT INTO emp ( empno, ename, job, mgr, hiredate, sal, comm, deptno )
+		VALUES
+		  ((START+i),rand_string(6),'SALESMAN',0001,CURDATE(),2000,400,rand_num());
+			UNTIL i = max_num 
+		END REPEAT;
+	COMMIT;
+
+END
+
+-- 创建出插入dept 表的存储过程
+CREATE PROCEDURE insert_dept (
+	IN START INT ( 10 ),
+	IN max_num INT ( 10 )) BEGIN
+	DECLARE
+		i INT DEFAULT 0;
+	
+	SET autocommit = 0;
+	REPEAT
+			
+			SET i = i + 1;
+		INSERT INTO dept ( depno, dname, loc )
+		VALUES
+		  ((START+i),rand_string(10),rand_string(8));
+			UNTIL i = max_num 
+		END REPEAT;
+	COMMIT;
+
+END
+
+-- 删除存储过程
+DROP PROCEDURE insert_dept
+
+-- 调用存储过程
+-- 编号从10000开始，插入10条数据
+call insert_dept(10000,10) ;
+-- 编号从1开始，插入50万条数据
+call insert_emp(1,500000);
 ```
 
 
