@@ -1589,6 +1589,257 @@ select sleep(4);
 -- 对慢查询日志的统计查询
 ```
 
+##### show profile
+
+```mysql
+-- mysql提供可以用来分析当前会话中语句执行的资源消耗情况，用于SQL调优测量
+-- 该参数默认数据关闭状态 
+-- 查询该参数是否开启
+-- 只记录最近的15次结果
+mysql>  show VARIABLES like 'profiling';
++---------------+-------+
+| Variable_name | Value |
++---------------+-------+
+| profiling     | OFF   |
++---------------+-------+
+
+-- 关闭参数
+mysql> set profiling = OFF;
+-- 打开参数
+mysql> set profiling = ON;
+
+-- 查看结果
+mysql> show profiles;
++----------+------------+---------------------------------+
+| Query_ID | Duration   | Query                           |
++----------+------------+---------------------------------+
+|        1 | 0.00330825 | show VARIABLES like 'profiling' |
++----------+------------+---------------------------------+
+
+-- 执行SQL
+mysql> show profiles;
++----------+------------+---------------------------------+
+| Query_ID | Duration   | Query                           |
++----------+------------+---------------------------------+
+|        1 | 0.00278475 | show variables like 'profiling' |
+|        2 | 0.00039525 | select * from dept              |
++----------+------------+---------------------------------+
+2 rows in set (0.13 sec)
+
+mysql> select count(*) from emp;
++----------+
+| count(*) |
++----------+
+|   500000 |
++----------+
+1 row in set (0.18 sec)
+
+-- 查看profiles
+mysql> show profiles;
++----------+------------+---------------------------------+
+| Query_ID | Duration   | Query                           |
++----------+------------+---------------------------------+
+|        1 | 0.00593550 | show VARIABLES like 'profiling' |
+|        2 | 0.03437150 | select count(*) from emp        |
+|        3 | 0.21396425 | select * from emp limit 1000    |
++----------+------------+---------------------------------+
+
+-- 如何查询指定Query_ID 的sql具体执行步骤
+-- 查询耗费cpu和block io
+mysql> show profile cpu,block io for query 2;
++--------------------------------+----------+----------+------------+--------------+---------------+
+| Status                         | Duration | CPU_user | CPU_system | Block_ops_in | Block_ops_out |
++--------------------------------+----------+----------+------------+--------------+---------------+
+| starting                       | 0.000076 | 0.000068 | 0.000000   |            0 |             0 |
+| Executing hook on transaction  | 0.000005 | 0.000004 | 0.000000   |            0 |             0 |
+| starting                       | 0.000008 | 0.000008 | 0.000000   |            0 |             0 |
+| checking permissions           | 0.000006 | 0.000006 | 0.000000   |            0 |             0 |
+| Opening tables                 | 0.000182 | 0.000184 | 0.000000   |            0 |             0 |
+| init                           | 0.000006 | 0.000005 | 0.000000   |            0 |             0 |
+| System lock                    | 0.000007 | 0.000006 | 0.000000   |            0 |             0 |
+| optimizing                     | 0.000005 | 0.000005 | 0.000000   |            0 |             0 |
+| statistics                     | 0.000010 | 0.000010 | 0.000000   |            0 |             0 |
+| preparing                      | 0.000012 | 0.000012 | 0.000000   |            0 |             0 |
+| executing                      | 0.033988 | 0.036445 | 0.000000   |            0 |             0 |
+| end                            | 0.000013 | 0.000007 | 0.000000   |            0 |             0 |
+| query end                      | 0.000004 | 0.000004 | 0.000000   |            0 |             0 |
+| waiting for handler commit     | 0.000009 | 0.000009 | 0.000000   |            0 |             0 |
+| closing tables                 | 0.000008 | 0.000007 | 0.000000   |            0 |             0 |
+| freeing items                  | 0.000031 | 0.000031 | 0.000000   |            0 |             0 |
+| cleaning up                    | 0.000003 | 0.000003 | 0.000000   |            0 |             0 |
++--------------------------------+----------+----------+------------+--------------+---------------+
+
+show profile用法
+type
+　　all 显示所有的开销信息
+　　block io 显示块io相关的开销
+　　context switches 上下文切换相关
+　　cpu 显示cpu相关开销
+　　ipc 显示发送和接收相关开销
+　　memory 显示内存相关开销信息
+　　page faults 显示页面错误相关开销
+　　source 显示和Source_function,Source_file,Source_line相关的开销信息
+　　swaps 显示交换次数相关开销的信息
+
+出现以下信息时其中一个,说明得优化
+　　converting HEAP to MyISAM查询结果太大,内存都不够用了往磁盘上搬了
+　　Creating tmp table 创建临时表,拷贝数据到临时表,用完再删除
+　　copying to tmp table 把内存中临时表复制到磁盘,危险!!!
+　　locked
+
+```
+
+##### 全局日志
+
+```mysql
+-- 该功能只在测试环境使用，生产环境不要开启
+-- 查看全局日志是否开启
+mysql> show variables like '%general_log%';
++------------------+--------------------------------------------------+
+| Variable_name    | Value                                            |
++------------------+--------------------------------------------------+
+| general_log      | OFF                                              |
+| general_log_file | /home/mysql/data/dbs/iZhp3d60mk2np8cf90lbyuZ.log |
++------------------+--------------------------------------------------+
+
+-- 配置启用 
+-- Variable 'general_log' is a GLOBAL variable and should be set with SET GLOBAL
+set global general_log=1;
+
+#记录日志的路径
+set global general_log_file=/path/logfile;
+#输出格式,file,table等
+set global log_output=table;
+
+-- 开启后,你所编写的SQL语句都将会记录到mysql库里的general_log表里
+-- 查看SQL记录
+```
+
+### 锁
+
+```mysql
+--  建表
+CREATE TABLE mylock (
+    id int not null PRIMARY KEY auto_increment ,
+		name VARCHAR(20)
+)ENGINE myisam ;
+
+
+INSERT INTO mylock(name) values('a') ;
+INSERT INTO mylock(name) values('b') ;
+INSERT INTO mylock(name) values('c') ;
+INSERT INTO mylock(name) values('d') ;
+INSERT INTO mylock(name) values('w') ;
+INSERT INTO mylock(name) values('g') ;
+
+SELECT * FROM mylock ;
+
+-- 如何查看表上是否有锁 ， In_use = 1  代表有锁 ， 0无锁
+mysql> show open tables;
++--------------------+----------------------------------------------------+--------+-------------+
+| Database           | Table                                              | In_use | Name_locked |
++--------------------+----------------------------------------------------+--------+-------------+
+| kettleRepo         | R_CONDITION                                        |      0 |           0 |
+| mysql              | innodb_index_stats                                 |      0 |           0 |
+| performance_schema | rwlock_instances                                   |      0 |           0 |
+| performance_schema | events_waits_history_long                          |      0 |           0 |
+| mysql              | servers                                            |      0 |           0 |
+| performance_schema | mutex_instances                                    |      0 |           0 |
+| performance_schema | events_waits_summary_by_host_by_event_name         |      0 |           0 |
+
+-- 给表加锁
+mysql> lock table test read , mylock write;        
+Query OK, 0 rows affected (0.00 sec)
+
++--------------------+----------------------------------------------------+--------+-------------+
+| Database           | Table                                              | In_use | Name_locked |
+| Company            | test                                               |      1 |           0 |
+| Company            | mylock                                             |      1 |           0 |
+
+-- 释放表锁
+mysql> unlock tables; 	
+Query OK, 0 rows affected (0.00 sec)
+```
+
+#### 读阻塞写的例子
+
+```mysql
+-- 给lock表加读锁，共享锁
+mysql> lock table mylock read ;
+Query OK, 0 rows affected (0.00 sec)
+
+-- 自己session可以查询数据
+mysql> select * from mylock ;
++----+------+
+| id | name |
++----+------+
+|  1 | a    |
+|  2 | b    |
+|  3 | c    |
+|  4 | d    |
+|  5 | w    |
+|  6 | g    |
++----+------+
+6 rows in set (0.00 sec)
+
+-- 本session不可以插入数据，读锁阻塞自己写操作
+mysql> insert into mylock(name) values('wanghaun');
+ERROR 1099 (HY000): Table 'mylock' was locked with a READ lock and can't be updated
+-- 本session未解锁mylock表之前，不可以查询其他表
+mysql> select * from employee ;
+ERROR 1100 (HY000): Table 'employee' was not locked with LOCK TABLES
+mysql> unlock tables;
+Query OK, 0 rows affected (0.00 sec)
+
+-- 其它session可以查看mylock表，因为read锁是共享锁
+mysql> select * from mylock ;
++----+------+
+| id | name |
++----+------+
+|  1 | a    |
+|  2 | b    |
+|  3 | c    |
+|  4 | d    |
+|  5 | w    |
+|  6 | g    |
++----+------+
+6 rows in set (0.00 sec)
+
+-- 其它session也可以查看别的表，因为该session没有read锁
+mysql> select * from employee ;
++------------+-----------+------------+----------+---------+-------------+--------------+
+| employeeId | name      | birth      | joblevel | salary  | phone       | departmentId |
++------------+-----------+------------+----------+---------+-------------+--------------+
+|       1001 | 张强      | 1986-02-03 | 一级     | 8000.00 | 13585422655 |            1 |
+|       1003 | 萌萌      | 1990-04-19 | 二级     | 6000.00 | 18548775264 |            2 |
+|       1004 | 李小峰    | 1973-07-20 | 二级     | 5700.00 | 18625489512 |            1 |
+|       1006 | 刘珊      | 1976-06-28 | 一级     | 7500.00 | 18524811174 |            2 |
+|       1007 | 李梅      | 1980-01-29 | 二级     | 5500.00 | 13958621455 |            3 |
+|       1008 | 张宝玉    | 1982-09-23 | 二级     | 5600.00 | 13715620210 |            1 |
+|       1009 | 陈大壮    | 1978-05-21 | 一级     | 7700.00 | 15848562585 |            4 |
+|       1010 | 张天琪    | 1980-09-15 | 二级     | 5000.00 | 13965815822 |            4 |
++------------+-----------+------------+----------+---------+-------------+--------------+
+8 rows in set (0.09 sec)
+
+-- 其它session对mylock表进行DML操作会被原session加锁 造成阻塞
+mysql>  insert into mylock(name) values('session2');
+Query OK, 1 row affected (12.67 sec)
+
+-- 待加锁session加锁后，上述阻塞语句执行成功，成功查询到插入结果
+mysql> select * from mylock;
++----+----------+
+| id | name     |
++----+----------+
+|  1 | a        |
+|  2 | b        |
+|  3 | c        |
+|  4 | d        |
+|  5 | w        |
+|  6 | g        |
+|  7 | session2 |
++----+----------+
+```
+
 
 
 ### 函数和存储过程
