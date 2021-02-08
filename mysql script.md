@@ -1761,7 +1761,9 @@ mysql> unlock tables;
 Query OK, 0 rows affected (0.00 sec)
 ```
 
-#### 读阻塞写的例子
+#### 表级锁
+
+##### 读锁阻塞写的例子
 
 ```mysql
 -- 给lock表加读锁，共享锁
@@ -1825,7 +1827,9 @@ mysql> select * from employee ;
 mysql>  insert into mylock(name) values('session2');
 Query OK, 1 row affected (12.67 sec)
 
--- 待加锁session加锁后，上述阻塞语句执行成功，成功查询到插入结果
+-- 解锁语句
+ unlock tables;
+-- 待加锁session解锁后，上述阻塞语句执行成功，成功查询到插入结果
 mysql> select * from mylock;
 +----+----------+
 | id | name     |
@@ -1838,6 +1842,172 @@ mysql> select * from mylock;
 |  6 | g        |
 |  7 | session2 |
 +----+----------+
+```
+
+##### 写锁阻塞读的例子
+
+```mysql
+-- 给表加写锁
+mysql> lock table mylock write;
+-- 自己session可以查数据
+mysql> select * from mylock;
++----+----------+
+| id | name     |
++----+----------+
+|  1 | a        |
+|  2 | b        |
+|  3 | c        |
+|  4 | d        |
+|  5 | w        |
+|  6 | g        |
+|  7 | session2 |
++----+----------+
+
+-- 自己session也可以增删改数据
+mysql> update mylock set name='doudou' where id = 1 ;
+Query OK, 1 row affected (0.01 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+mysql> select * from mylock;
++----+----------+
+| id | name     |
++----+----------+
+|  1 | doudou   |
+|  2 | b        |
+|  3 | c        |
+|  4 | d        |
+|  5 | w        |
+|  6 | g        |
+|  7 | session2 |
++----+----------+
+
+-- 不可以查询别的表，因为当前表还有写锁未释放
+mysql> select * from test;
+ERROR 1100 (HY000): Table 'test' was not locked with LOCK TABLES
+
+-- 其他session对这张表的任何增删改查操作都会被阻塞
+-- 其他session对别的表的增删改查没有问题，因为不是同一张表
+
+-- 只到原有session释放了对这张表的写锁后
+-- 其他session的CRUD才可以正常进行
+```
+
+##### 总结
+
+```mysql
+-- 针对myisam
+MYISAM引擎在执行select查询前，会给自动涉及到的表加读锁，在执行增删改查前，会给表添加写锁。mysql的表级锁一共有两种
+1. 表级共享读锁 （table read lock）
+2. 表独占写锁  (table write lock)
+
+对MYISAM表进行操作时 ，会有如下情况
+1. 对MYISAM表的读操作（加读锁），不会阻塞其他进程对该表的读请求，但是会阻塞对同一表的写请求。只有当读锁释放后，才会执行对其他进程的写操作。
+2. 对MYISAM表的写操作（加写锁），会阻塞其他进程对同一表的读写请求，但不会阻塞自己进程的读写请求，只有当写锁释放后，才会执行其他进程的读写操作。
+```
+
+##### 表级锁分析
+
+```mysql
+-- 如何查看表上有什么锁
+mysql> show open tables;
++--------------------+----------------------------------------------------+--------+-------------+
+| Database           | Table                                              | In_use | Name_locked |
++--------------------+----------------------------------------------------+--------+-------------+
+| kettleRepo         | R_CONDITION                                        |      0 |           0 |
+| mysql              | innodb_index_stats                                 |      0 |           0 |
+| performance_schema | rwlock_instances                                   |      0 |           0 |
+
+-- 
+mysql> show status like 'Table_locks%';
++-----------------------+-------+
+| Variable_name         | Value |
++-----------------------+-------+
+| Table_locks_immediate | 2428  |
+| Table_locks_waited    | 1     |
++-----------------------+-------+
+Table_locks_immediate  ： 产生表级锁定的次数，表示可以立即获取锁的查询次数，即，每次获取锁值就加1 
+Table_locks_waited ： 出现表级锁定发生等待的次数，不能立即获得锁每等待一次就加1 ，该值高说明存在很高的表级锁争用。
+```
+
+##### 间隙锁
+
+```mysql
+mysql> select * from stu;
++-------------+-----------+------+--------+-------------+
+| uuid        | name      | age  | gender | email       |
++-------------+-----------+------+--------+-------------+
+| 20141102054 | wanghuan  |   30 | F      | 1234@qq.com |
+| 20141102054 | wanghuan  |   30 | F      | 1234@qq.com |
+| 20141102054 | wanghuan  |   30 | F      | 1234@qq.com |
+| 20141105592 | 范欣桐    |   25 | NULL   | NULL        |
+| wanghuan    | aa        |   25 | F      | 1234@qq.com |
+| 1234        | 中国      |   23 | F      | afqefqef    |
+| 1234        | 中国      |   23 | F      | afqefqef    |
+| 1234        | 涓?浗     |   23 | F      | afqefqef    |
+| 1234        | 中国      |   23 | F      | afqefqef    |
++-------------+-----------+------+--------+-------------+
+9 rows in set (0.00 sec)
+
+-- 区间更新值
+mysql> update stu set name='kb' where uuid >= '20141102054' and uuid <= '20141102099' ;
+Query OK, 3 rows affected (2.16 sec)
+Rows matched: 3  Changed: 3  Warnings: 0
+
+-- 另外session ， 插入位于上述区间内的值，插入会被阻塞，直到上述SQL提交后
+mysql> insert into stu(uuid,name ,age ,gender,email) values('20141102056','aaaaaa',35,'F','afqe2@FAFQE.COM');
+
+/*
+  查询过程中通过范围查找的话，会锁定整个范围内所有的索引键值 ，即使这个值不存在，间隙锁的缺点就是，当锁定的一个范围键值后，某些不存在的键值也会被锁住，会造成插入指定范围内的任何数据。
+*/
+```
+
+##### 行锁
+
+```mysql
+-- 查看mysql  行锁
+mysql>  show status like '%row_lock%';
++-------------------------------+-------+
+| Variable_name                 | Value |
++-------------------------------+-------+
+| Innodb_row_lock_current_waits | 0     |
+| Innodb_row_lock_time          | 25526 |
+| Innodb_row_lock_time_avg      | 8508  |
+| Innodb_row_lock_time_max      | 12713 |
+| Innodb_row_lock_waits         | 3     |
++-------------------------------+-------+
+
+/*
+对于各个状态说明如下：
+
+Innodb_row_lock_current_waits:当前正在等待锁的数量；
+
+Innodb_row_lock_time:从系统启动到现在锁定总时间长度；
+
+Innodb_row_lock_time_avg：每次等待所花平均时间；
+
+Innodb_row_lock_time_max:从系统启动到现在等待最长的一次所花的时间长度；
+
+Innodb_row_lock_waits:系统启动到现在总共等待的次数；
+
+对于这5个状态变量，比较重要的是：
+
+Innodb_row_lock_time_avg，Innodb_row_lock_waits，Innodb_row_lock_time。
+*/
+```
+
+##### 使用锁的建议
+
+```mysql
+1. 检索数据尽量保证通过索引来完成，避免无索引升级为表锁。
+2. 合理设计索引，尽量缩小锁的范围
+3. 尽可能不使用范围加锁，减少间隙锁的概率
+4. 尽量控制事务的大小，减少锁定资源量和时间长度
+5. 尽可能低级别事务隔离
+```
+
+### 主从复制
+
+```msyql
+-- 
 ```
 
 
